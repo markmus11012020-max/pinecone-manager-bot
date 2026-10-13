@@ -18,7 +18,7 @@ from config.settings import (
     EMBEDDING_DIMENSION,
     EMBEDDING_MODEL,
     PINECONE_API_KEY,
-    PINECONE_BASE_URL,
+    PINECONE_PROXY_URL,
     PINECONE_ENVIRONMENT,
     PINECONE_INDEX_NAME,
     SIMILARITY_THRESHOLD,
@@ -39,14 +39,14 @@ class PineconeManager:
         api_key: Optional[str] = None,
         environment: Optional[str] = None,
         index_name: Optional[str] = None,
-        base_url: Optional[str] = None,
+        proxy_url: Optional[str] = None,
         embedding_model: Optional[str] = None,
         similarity_threshold: Optional[float] = None,
     ) -> None:
         self.api_key = api_key or PINECONE_API_KEY
         self.environment = environment or PINECONE_ENVIRONMENT
         self.index_name = index_name or PINECONE_INDEX_NAME
-        self.base_url = (base_url or PINECONE_BASE_URL or "").strip() or None
+        self.proxy_url = (proxy_url or PINECONE_PROXY_URL or "").strip() or None
         self.similarity_threshold = (
             similarity_threshold
             if similarity_threshold is not None
@@ -56,20 +56,20 @@ class PineconeManager:
         if not self.api_key:
             raise ValueError("PINECONE_API_KEY is required")
 
-        # Initialise Pinecone client (supports optional proxy via proxy_url / PINECONE_BASE_URL)
+        # Initialise Pinecone client (supports optional proxy via PINECONE_PROXY_URL).
+        # NB: it is passed to the SDK as `proxy_url` (HTTP/HTTPS proxy), NOT as an API base URL.
         client_kwargs: Dict[str, Any] = {"api_key": self.api_key}
-        if self.base_url:
-            # Official SDK uses proxy_url for HTTP/HTTPS proxies
-            client_kwargs["proxy_url"] = self.base_url
-            logger.info("Using proxy_url=%s for Pinecone client", self.base_url)
+        if self.proxy_url:
+            client_kwargs["proxy_url"] = self.proxy_url
+            logger.info("Using proxy_url=%s for Pinecone client", self.proxy_url)
         try:
             self.pc = Pinecone(**client_kwargs)
         except TypeError:
             # Fallback for older SDK versions that do not accept proxy_url
             self.pc = Pinecone(api_key=self.api_key)
-            if self.base_url:
+            if self.proxy_url:
                 logger.warning(
-                    "PINECONE_BASE_URL was provided but the installed pinecone-client "
+                    "PINECONE_PROXY_URL is set but the installed pinecone-client "
                     "does not accept proxy_url. Proxy support may be limited."
                 )
 

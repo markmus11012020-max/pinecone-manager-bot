@@ -28,8 +28,9 @@ TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
 PINECONE_API_KEY: str = os.getenv("PINECONE_API_KEY", "")
 PINECONE_ENVIRONMENT: str = os.getenv("PINECONE_ENVIRONMENT", "us-east-1")
 PINECONE_INDEX_NAME: str = os.getenv("PINECONE_INDEX_NAME", "telegram-bot-memory")
-# Optional base URL for proxy support (e.g. https://proxy.example.com)
-PINECONE_BASE_URL: str = os.getenv("PINECONE_BASE_URL", "")
+# Optional HTTP/HTTPS proxy URL used by the Pinecone SDK (passed as `proxy_url`).
+# Leave empty to disable proxying. Example: http://user:pass@proxy.example.com:8080
+PINECONE_PROXY_URL: str = os.getenv("PINECONE_PROXY_URL", "")
 
 # ---------------------------------------------------------------------------
 # Embeddings

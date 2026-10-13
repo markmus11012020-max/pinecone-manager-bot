@@ -17,9 +17,10 @@ echo.
 
 REM ---- 1. Stop old processes ----
 echo [1/4] Stopping old processes...
-taskkill /F /IM python.exe /FI "WINDOWTITLE eq Bot-AI-Telegram*" /T >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PROJECT_DIR%stop_bot.ps1"
 if errorlevel 1 (
-    echo No old processes found.
+    echo WARNING: failed to stop old instances. If the new bot reports
+    echo "409 Conflict", close the old console window manually.
 ) else (
     echo Old processes terminated.
 )
@@ -71,9 +72,9 @@ echo.
 REM ---- 4. Launch Telegram Bot ----
 echo [4/4] Launching Telegram Bot...
 if not exist "%PROJECT_DIR%.env" (
-    if exist "%PROJECT_DIR%.env.example" (
-        echo WARNING: .env missing, copying from .env.example
-        copy /y "%PROJECT_DIR%.env.example" "%PROJECT_DIR%.env" >nul
+    if exist "%PROJECT_DIR%env.example" (
+        echo WARNING: .env missing, copying from env.example
+        copy /y "%PROJECT_DIR%env.example" "%PROJECT_DIR%.env" >nul
     ) else (
         echo WARNING: no .env found. App will start with default placeholders.
     )

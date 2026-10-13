@@ -25,6 +25,7 @@ from config.settings import (
 )
 from src.pinecone_manager import PineconeManager
 from src.llm_client import LLMClient
+from src.single_instance import SingleInstanceError, acquire
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -36,6 +37,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bot")
 
+# pyTelegramBotAPI attaches its own StreamHandler to the "TeleBot" logger at
+# import time. Without this, every telebot message is printed twice (once in
+# telebot's own format, once via root) and its level stays at ERROR, which
+# hides polling diagnostics such as "Started polling".
+telebot_logger = logging.getLogger("TeleBot")
+telebot_logger.handlers.clear()
+telebot_logger.propagate = True
+telebot_logger.setLevel(logging.INFO)
+
 # ---------------------------------------------------------------------------
 # Initialise
 # ---------------------------------------------------------------------------
@@ -43,6 +53,14 @@ if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN.startswith("your_"):
     logger.error(
         "TELEGRAM_BOT_TOKEN is not set. Create a .env file with a valid token from @BotFather."
     )
+    sys.exit(1)
+
+# Only one process may poll this token. Fail loudly instead of letting both
+# copies cancel each other with 409 Conflict.
+try:
+    _instance_lock = acquire(TELEGRAM_BOT_TOKEN)
+except SingleInstanceError as e:
+    logger.error("%s", e)
     sys.exit(1)
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN, parse_mode="HTML")

@@ -14,7 +14,7 @@ Telegram-бот-помощник, который ведёт диалог, зап
 - Генерация естественных ответов через LLM с учётом памяти
 - LLM-провайдер: **AITUNNEL** (`https://api.aitunnel.ru/v1`), модель по умолчанию `openai/gpt-5-nano`
 - Изоляция памяти разных пользователей через metadata
-- Поддержка прокси (`PINECONE_BASE_URL` / `proxy_url`)
+- Поддержка HTTP/HTTPS-прокси (`PINECONE_PROXY_URL` → передаётся в SDK как `proxy_url`)
 - Автоматическое создание serverless-индекса при первом запуске
 - Простой Windows-скрипт развёртывания (`start.bat`)
 
@@ -58,7 +58,7 @@ TELEGRAM_BOT_TOKEN=ваш_токен_от_BotFather
 PINECONE_API_KEY=ваш_ключ_Pinecone
 PINECONE_ENVIRONMENT=us-east-1
 PINECONE_INDEX_NAME=telegram-bot-memory
-PINECONE_BASE_URL=                    # опционально, для прокси
+# PINECONE_PROXY_URL=http://user:pass@proxy.example.com:8080    # опционально: HTTP-прокси
 SIMILARITY_THRESHOLD=0.85
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 
@@ -145,7 +145,7 @@ python src/bot.py
 | Переменная              | Описание                                      | По умолчанию                    |
 |-------------------------|-----------------------------------------------|---------------------------------|
 | `SIMILARITY_THRESHOLD`  | Порог косинусного сходства для дубликатов     | `0.85`                          |
-| `PINECONE_BASE_URL`     | URL прокси (передаётся как `proxy_url`)       | пусто                           |
+| `PINECONE_PROXY_URL`    | URL HTTP/HTTPS-прокси (передаётся как `proxy_url`) | пусто                       |
 | `EMBEDDING_MODEL`       | Модель sentence-transformers                  | `all-MiniLM-L6-v2`              |
 | `TOP_K_MEMORIES`        | Сколько воспоминаний подтягивать для контекста| `5`                             |
 | `LLM_BASE_URL`          | Base URL LLM-провайдера                       | `https://api.aitunnel.ru/v1`    |
