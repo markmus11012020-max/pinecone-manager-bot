@@ -1,0 +1,5 @@
+- Telegram bot with Pinecone long-term memory + LLM project under artifacts/ [2026-10-13]
+- Structure: config/settings.py, src/pinecone_manager.py, src/llm_client.py, src/bot.py, requirements.txt, start.bat, .env.example, README.md, .gitignore, commit.bat, push.bat
+- LLM via AITUNNEL: base_url=https://api.aitunnel.ru/v1, default model=openai/gpt-5-nano
+- Uses sentence-transformers, pyTelegramBotAPI, pinecone, openai SDK
+- Duplicate filtering via cosine similarity threshold (default 0.85)
