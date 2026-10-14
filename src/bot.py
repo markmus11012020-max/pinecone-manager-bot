@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from pathlib import Path
 
 # Ensure project root is on sys.path so "config" and "src" imports work
@@ -81,6 +82,154 @@ except Exception as e:
 
 
 # ---------------------------------------------------------------------------
+# Haystack mode (module hay/)
+# ---------------------------------------------------------------------------
+# The Haystack agent is built lazily: importing haystack + sentence-transformers
+# takes several seconds and there is no reason to pay for it if the user never
+# switches to /haystack. This keeps the standard mode exactly as fast as before.
+HAYSTACK_HELP = (
+    "🧠 <b>Режим Haystack включён.</b>\n\n"
+    "Теперь я работаю как умный персональный помощник на фреймворке Haystack:\n"
+    "• помню историю диалога и факты о тебе в Pinecone (изоляция по user_id);\n"
+    "• отвечаю, опираясь на найденный по косинусному сходству контекст;\n"
+    "• умею вызывать инструменты: анализ облигаций РФ и мультимодальные «собаки».\n\n"
+    "Просто пиши как обычно. Вернуться в обычный режим: <code>/haystackoff</code>"
+)
+
+_HAYSTACK_ASSISTANT = None  # type: ignore[var-annotated]
+_HAYSTACK_FAILED_REASON: str | None = None
+_HAYSTACK_FAILED_AT: float = 0.0
+
+# После неудачной инициализации повторяем попытку не чаще раза в 5 минут:
+# так временная сетевая ошибка не блокирует режим навсегда, но и не превращает
+# каждое сообщение в повторную тяжёлую загрузку моделей.
+_HAYSTACK_RETRY_COOLDOWN = 300.0
+
+# Выбранный режим хранится в оперативной памяти процесса бота.
+# user_id -> True, если пользователь работает через Haystack.
+USER_MODES: dict[int, bool] = {}
+
+
+def is_haystack_mode(user_id: int) -> bool:
+    """Текущий режим пользователя (по умолчанию — стандартный)."""
+    return USER_MODES.get(int(user_id), False)
+
+
+def set_haystack_mode(user_id: int, enabled: bool) -> None:
+    """Переключить режим пользователя."""
+    USER_MODES[int(user_id)] = bool(enabled)
+    logger.info(
+        "Mode switch | user_id=%s | haystack=%s | активных в режиме hay=%d",
+        user_id,
+        enabled,
+        sum(1 for v in USER_MODES.values() if v),
+    )
+
+
+def get_haystack_assistant():
+    """Ленивая инициализация агента Haystack (создаётся один раз)."""
+    global _HAYSTACK_ASSISTANT, _HAYSTACK_FAILED_REASON, _HAYSTACK_FAILED_AT
+
+    if _HAYSTACK_ASSISTANT is not None:
+        return _HAYSTACK_ASSISTANT
+
+    now = time.monotonic()
+    if _HAYSTACK_FAILED_REASON:
+        waited = now - _HAYSTACK_FAILED_AT
+        if waited < _HAYSTACK_RETRY_COOLDOWN:
+            logger.warning(
+                "Агент Haystack недоступен (ошибка %d с. назад): %s",
+                int(waited),
+                _HAYSTACK_FAILED_REASON,
+            )
+            return None
+        logger.info("Повторная попытка инициализации агента Haystack...")
+
+    logger.info("Инициализация агента Haystack (первый запуск, это может занять время)...")
+    try:
+        from hay.agent import HaystackAssistant
+
+        _HAYSTACK_ASSISTANT = HaystackAssistant()
+        _HAYSTACK_FAILED_REASON = None
+        _HAYSTACK_FAILED_AT = 0.0
+        logger.info("Агент Haystack успешно инициализирован")
+        return _HAYSTACK_ASSISTANT
+    except Exception as e:
+        _HAYSTACK_FAILED_REASON = str(e)
+        _HAYSTACK_FAILED_AT = time.monotonic()
+        logger.exception("Не удалось инициализировать агент Haystack: %s", e)
+        return None
+
+
+def _send_haystack_text(message: types.Message, text: str) -> None:
+    """
+    Отправить ответ агента.
+
+    LLM иногда возвращает «<» или «&», которые Telegram в HTML-режиме считает
+    тегами и отклоняет всю отправку — при такой ошибке уходим повторно без
+    разметки, чтобы пользователь всё равно получил ответ.
+    """
+    try:
+        bot.reply_to(message, text)
+    except Exception as e:
+        logger.warning("HTML-отправка не удалась (%s), отправляю без разметки", e)
+        bot.reply_to(message, text, parse_mode=None)
+
+
+def handle_haystack_reply(message: types.Message, text: str) -> None:
+    """Обработать текстовое сообщение в режиме Haystack."""
+    uid = str(message.from_user.id)
+    name = message.from_user.first_name or "пользователь"
+    logger.info("Haystack mode | text from %s (%s): %s", uid, name, text[:80])
+
+    try:
+        bot.send_chat_action(message.chat.id, "typing")
+    except Exception:
+        pass
+
+    assistant = get_haystack_assistant()
+    if assistant is None:
+        _send_haystack_text(
+            message,
+            "😔 Не удалось запустить режим Haystack.\n"
+            f"<code>{_HAYSTACK_FAILED_REASON or 'неизвестная ошибка'}</code>\n\n"
+            "Подробности — в консоли бота. Вернуться в обычный режим: /haystackoff",
+        )
+        return
+
+    try:
+        result = assistant.run(
+            user_id=uid,
+            query=text,
+            user_name=name,
+            facts=extract_facts(text),
+        )
+    except Exception as e:
+        logger.exception("Ошибка пайплайна Haystack для user=%s: %s", uid, e)
+        _send_haystack_text(
+            message, f"Что-то пошло не так в пайплайне Haystack.\n<code>{e}</code>"
+        )
+        return
+
+    reply = result.get("reply") or ""
+    image_url = result.get("image_url") or ""
+
+    # Инструмент «собаки» возвращает URL фотографии — отправляем её как фото.
+    if image_url:
+        try:
+            bot.send_photo(message.chat.id, image_url, caption=reply[:1024], parse_mode="HTML")
+        except Exception as e:
+            logger.warning("Не удалось отправить фото %s: %s", image_url, e)
+            _send_haystack_text(message, reply)
+    else:
+        _send_haystack_text(message, reply)
+
+    stored = result.get("stored", 0)
+    if stored:
+        logger.info("Haystack | сохранено новых фактов: %d | user=%s", stored, uid)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def extract_facts(text: str) -> list[str]:
@@ -139,8 +288,61 @@ def cmd_start(message: types.Message) -> None:
         f"<b>Команды:</b>\n"
         f"/start — это сообщение\n"
         f"/memory — показать сохранённые воспоминания\n"
-        f"/reset — (заглушка) очистить мою память о тебе\n\n"
+        f"/reset — (заглушка) очистить мою память о тебе\n"
+        f"/haystack — умный помощник на фреймворке Haystack (с инструментами и памятью)\n"
+        f"/haystackoff — вернуться в обычный режим\n\n"
         f"Просто пиши текст — я отвечу с учётом контекста.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Переключение режимов: обычный <-> Haystack
+# ---------------------------------------------------------------------------
+@bot.message_handler(commands=["haystack"])
+def cmd_haystack_on(message: types.Message) -> None:
+    uid = message.from_user.id
+    name = message.from_user.first_name or "друг"
+    logger.info("/haystack from user_id=%s (%s)", uid, name)
+
+    if is_haystack_mode(uid):
+        bot.reply_to(message, "Режим Haystack уже включён 🙂\nОтключить: /haystackoff")
+        return
+
+    set_haystack_mode(uid, True)
+    logger.info("Пользователь %s переключён в режим Haystack", uid)
+    bot.reply_to(message, HAYSTACK_HELP)
+
+
+@bot.message_handler(commands=["haystackoff", "haystack_off", "standard"])
+def cmd_haystack_off(message: types.Message) -> None:
+    uid = message.from_user.id
+    logger.info("/haystackoff from user_id=%s", uid)
+
+    if not is_haystack_mode(uid):
+        bot.reply_to(message, "Ты и так в обычном режиме 🙂\nВключить Haystack: /haystack")
+        return
+
+    set_haystack_mode(uid, False)
+    logger.info("Пользователь %s вернулся в обычный режим", uid)
+    bot.reply_to(
+        message,
+        "✅ Вернулся в обычный режим.\n\n"
+        "Пиши текст — отвечу через LLM с долговременной памятью в Pinecone. "
+        "Снова включить умного помощника: /haystack",
+    )
+
+
+@bot.message_handler(commands=["haystatus"])
+def cmd_haystack_status(message: types.Message) -> None:
+    uid = message.from_user.id
+    mode = "Haystack" if is_haystack_mode(uid) else "обычный"
+    assistant_state = "не создан" if _HAYSTACK_ASSISTANT is None else "готов"
+    bot.reply_to(
+        message,
+        f"<b>Текущий режим:</b> {mode}\n"
+        f"<b>Агент Haystack:</b> {assistant_state}\n"
+        f"<b>Модель:</b> <code>{LLM_MODEL}</code>\n\n"
+        f"Переключить: /haystack — включить, /haystackoff — выключить.",
     )
 
 
@@ -179,6 +381,12 @@ def handle_text(message: types.Message) -> None:
     uid = str(message.from_user.id)
     text = message.text.strip()
     name = message.from_user.first_name or "пользователь"
+
+    # Haystack mode has its own pipeline (memory + tools) — route it there.
+    if is_haystack_mode(message.from_user.id):
+        handle_haystack_reply(message, text)
+        return
+
     logger.info("Text from %s: %s", uid, text[:80])
 
     # Show "typing..." while we work
