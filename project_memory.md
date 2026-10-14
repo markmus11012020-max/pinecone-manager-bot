@@ -3,3 +3,6 @@
 - LLM via AITUNNEL: base_url=https://api.aitunnel.ru/v1, default model=openai/gpt-5-nano
 - Uses sentence-transformers, pyTelegramBotAPI, pinecone, openai SDK
 - Duplicate filtering via cosine similarity threshold (default 0.85)
+- start.bat must not require network when venv is complete: it runs an offline importlib.metadata check against requirements.txt first, and only calls pip when something is missing [2026-10-14]
+- Import names differ from distribution names (pyTelegramBotAPI -> telebot, pinecone-haystack -> haystack_integrations.components.pinecone); always verify packages by distribution name [2026-10-14]
+- In start.bat, avoid `!` in any command string: the script uses `setlocal EnableDelayedExpansion`, which silently eats text between exclamation marks [2026-10-14]

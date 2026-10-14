@@ -39,7 +39,19 @@ echo Cache cleared.
 echo.
 
 REM ---- 3. Build virtual env + install deps ----
+REM The venv is reused across launches, so pip is only contacted when something
+REM is actually missing. That keeps start.bat working on a flaky/offline link:
+REM a PyPI timeout must not block a launch when every dependency is installed.
+REM Optional flags: start.bat --reinstall (force pip run), start.bat --upgrade-pip
 echo [3/5] Preparing virtual environment...
+
+set "FORCE_INSTALL="
+set "UPGRADE_PIP="
+for %%a in (%*) do (
+    if /i "%%~a"=="--reinstall" set "FORCE_INSTALL=1"
+    if /i "%%~a"=="--upgrade-pip" set "UPGRADE_PIP=1"
+)
+
 if not exist "%VENV_DIR%\Scripts\python.exe" (
     echo Creating venv...
     "%PYTHON%" -m venv "%VENV_DIR%"
@@ -54,20 +66,47 @@ if not exist "%VENV_DIR%\Scripts\python.exe" (
 set "VENV_PY=%VENV_DIR%\Scripts\python.exe"
 set "VENV_PIP=%VENV_DIR%\Scripts\pip.exe"
 
-echo Upgrading pip...
-"%VENV_PY%" -m pip install --upgrade pip --quiet
+REM Offline dependency check - never touches the network.
+REM Checks every distribution listed in requirements.txt against the ones already
+REM installed, by distribution name (not import name: pyTelegramBotAPI imports as
+REM telebot, pinecone-haystack as haystack_integrations.components.pinecone).
+REM If a package is present but too old, re-run with start.bat --reinstall.
+set "DEPCHK=import sys,importlib.metadata as md,re; have={d.metadata['Name'].lower().replace('_','-') for d in md.distributions() if d.metadata['Name']}; reqs=[l.split('#')[0].strip() for l in open(r'%PROJECT_DIR%requirements.txt',encoding='utf-8') if l.split('#')[0].strip()]; miss=[r for r in reqs if re.split(r'[<>=~,;]',r)[0].strip().lower().replace('_','-') not in have]; print('Dependency check: all packages present' if not miss else 'Dependency check: missing ' + ', '.join(miss)); sys.exit(1 if miss else 0)"
 
-if exist "%PROJECT_DIR%requirements.txt" (
-    echo Installing dependencies from requirements.txt...
-    "%VENV_PIP%" install -r "%PROJECT_DIR%requirements.txt" --quiet
-    if errorlevel 1 (
-        echo ERROR: dependency installation failed.
-        exit /b 1
-    )
-) else (
-    echo WARNING: requirements.txt not found.
-)
-echo Dependencies installed.
+if defined UPGRADE_PIP goto :upgrade_pip
+
+if exist "%PROJECT_DIR%requirements.txt" goto :check_deps
+echo WARNING: requirements.txt not found.
+goto :deps_ready
+
+:upgrade_pip
+echo Upgrading pip...
+"%VENV_PY%" -m pip install --upgrade pip --disable-pip-version-check --retries 2 --timeout 60 --quiet
+
+:check_deps
+"%VENV_PY%" -c "%DEPCHK%"
+if errorlevel 1 goto :install_deps
+if defined FORCE_INSTALL goto :install_deps
+echo All dependencies present - skipping pip install.
+goto :deps_ready
+
+:install_deps
+echo Installing dependencies from requirements.txt...
+"%VENV_PIP%" install -r "%PROJECT_DIR%requirements.txt" --disable-pip-version-check --retries 2 --timeout 60 --quiet
+if errorlevel 1 goto :install_failed
+goto :deps_ready
+
+:install_failed
+echo WARNING: dependency installation failed (no network or PyPI unreachable).
+"%VENV_PY%" -c "%DEPCHK%"
+if not errorlevel 1 goto :deps_ready
+echo ERROR: required dependencies are missing and could not be installed.
+echo        Run this once the connection is back:
+echo        "%VENV_PY%" -m pip install -r "%PROJECT_DIR%requirements.txt"
+exit /b 1
+
+:deps_ready
+echo Dependencies ready.
 echo.
 
 REM ---- 4. Preflight: check that the Haystack module is importable ----
