@@ -21,6 +21,12 @@ SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.85"))
 # Telegram
 # ---------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# Optional HTTP/HTTPS/SOCKS proxy for Telegram Bot API.
+# Example: http://127.0.0.1:8080 or socks5h://127.0.0.1:1080
+TELEGRAM_PROXY_URL: str = os.getenv("TELEGRAM_PROXY_URL", "")
+# Optional custom Bot API base URL (reverse proxy or local Bot API server).
+# Example: https://tg-api.example.com
+TELEGRAM_API_URL: str = os.getenv("TELEGRAM_API_URL", "")
 
 # ---------------------------------------------------------------------------
 # Pinecone

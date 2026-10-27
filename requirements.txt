@@ -1,4 +1,4 @@
-pyTelegramBotAPI>=4.14.0
+pyTelegramBotAPI>=4.36.0
 pinecone>=5.0.0,<10.0.0
 sentence-transformers>=2.2.0
 python-dotenv>=1.0.0
@@ -9,3 +9,4 @@ requests>=2.31.0
 haystack-ai>=3.0.0
 pinecone-haystack>=6.0.0
 docling>=2.0.0
+PySocks>=1.7.1

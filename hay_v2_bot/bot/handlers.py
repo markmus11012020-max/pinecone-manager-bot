@@ -158,6 +158,28 @@ def _safe_filename(name: str) -> str:
     return base or "document"
 
 
+def download_telegram_file(
+    bot: telebot.TeleBot,
+    file_path: str,
+    local_path: str,
+) -> int:
+    """
+    Скачать файл Telegram в ``local_path`` и вернуть его размер в байтах.
+
+    Начиная с pyTelegramBotAPI 4.36 ``TeleBot.download_file`` принимает только
+    ``file_path`` и возвращает содержимое в виде ``bytes`` — файл нужно писать
+    на диск самостоятельно. Старый вариант с каталогом назначения удалён из API.
+    """
+    payload = bot.download_file(file_path)
+    if not isinstance(payload, (bytes, bytearray)):
+        raise RuntimeError(
+            "Telegram не вернул содержимое файла (пустой ответ Bot API)"
+        )
+    with open(local_path, "wb") as handle:
+        handle.write(payload)
+    return len(payload)
+
+
 def send_text(bot: telebot.TeleBot, chat_id: int, text: str) -> None:
     """
     Отправить текст, разбивая длинные ответы.
@@ -292,7 +314,7 @@ def register_handlers(bot: telebot.TeleBot, assistant: AssistantService) -> None
         try:
             logger.info("[BOT] Скачивание файла | user=%s | file_id=%s", uid, document.file_id)
             file_info = bot.get_file(document.file_id)
-            bot.download_file(file_info.file_path, local_path)
+            download_telegram_file(bot, file_info.file_path, local_path)
             downloaded_size = os.path.getsize(local_path)
             logger.info(
                 "[BOT] Файл скачан | user=%s | path=%s | bytes=%d",
@@ -314,8 +336,11 @@ def register_handlers(bot: telebot.TeleBot, assistant: AssistantService) -> None
                 send_text(
                     bot,
                     message.chat.id,
-                    "⚠️ В файле не найден текст для сохранения. "
-                    "Возможно, это скан без текстового слоя или пустой документ.",
+                    "⚠️ В файле не найден текст для сохранения.\n\n"
+                    "Я попробовал три способа: обычный разбор, чтение текстового слоя "
+                    "и полностраничный OCR — текста нет ни в одном.\n\n"
+                    "Скорее всего, это скан низкого качества или пустой документ. "
+                    "Попробуй прислать PDF с текстовым слоем либо скан лучшего качества.",
                 )
                 return
 
@@ -397,4 +422,9 @@ def register_handlers(bot: telebot.TeleBot, assistant: AssistantService) -> None
     )
 
 
-__all__ = ["AssistantService", "register_handlers", "send_text"]
+__all__ = [
+    "AssistantService",
+    "download_telegram_file",
+    "register_handlers",
+    "send_text",
+]

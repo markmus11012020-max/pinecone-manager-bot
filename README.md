@@ -36,6 +36,8 @@ Telegram-бот-помощник, который ведёт диалог, зап
 - Приём **PDF, DOCX, PPTX, XLSX, HTML, Markdown, AsciiDoc, CSV**
 - Разбор документов через **[Docling](https://docling-project.github.io/docling/)**: структура,
   таблицы, заголовки и смысловые чанки через `HybridChunker`
+- OCR сканов (RapidOCR) с аварийными стратегиями: `force_backend_text` для
+  «упрямых» PDF и полностраничный OCR, если авто-режим не нашёл текст
 - Каждый чанк хранится в Pinecone с метаданными `user_id`, `file_name`, `page_number`
   (+ `chunk_index`, `section`, `source`)
 - Текстовые вопросы → RAG-поиск **строго по документам текущего `user_id`** → ответ LLM
@@ -62,7 +64,7 @@ Telegram-бот-помощник, который ведёт диалог, зап
 │   ├── tools.py             # Кастомные @component: облигации РФ и мультимодальные «собаки»
 │   └── agent.py             # Сборка пайплайна Haystack и агента, детальный логи run()
 ├── hay_v2_bot/              # ★ Вторая версия: Haystack + Docling + Pinecone (RAG)
-│   ├── main.py              # Точка входа и проверка окружения --check
+│   ├── main.py              # Точка входа, --check и локальный разбор --inspect
 │   ├── components/
 │   │   ├── docling_converter.py  # Docling → смысловые чанки + метаданные
 │   │   └── embeddings.py         # sentence-transformers для чанков и запросов
@@ -178,6 +180,19 @@ venv\Scripts\python.exe hay_v2_bot\main.py
 venv\Scripts\python.exe hay_v2_bot\main.py --check
 ```
 
+Проверка только соединения с Telegram Bot API:
+
+```powershell
+venv\Scripts\python.exe hay_v2_bot\main.py --check-telegram
+```
+
+Локальный разбор одного файла (без Telegram и Pinecone) — удобно, если бот пишет,
+что не нашёл в документе текст:
+
+```powershell
+venv\Scripts\python.exe hay_v2_bot\main.py --inspect "C:\путь\к\статье.pdf"
+```
+
 > `start.bat` по-прежнему запускает первую версию (`src\bot.py`). Так как обе версии
 > используют один `TELEGRAM_BOT_TOKEN`, одновременно они работать не могут: сначала
 > остановите v1, затем запустите v2 командой выше. Защита от второго экземпляра
@@ -271,8 +286,9 @@ URL фотографии передаётся в состояние агента
 
 `hay_v2_bot` — самостоятельный Telegram-бот, а не режим основного бота. Он не
 включается командами вроде `/haystack`, а запускается отдельным процессом из
-`hay_v2_bot/main.py`. Настройки берутся из того же `.env`; новых переменных не
-требуется.
+`hay_v2_bot/main.py`. Настройки берутся из того же `.env`; обязательных новых
+переменных не требуется (опциональные `TELEGRAM_PROXY_URL` / `TELEGRAM_API_URL`
+общие для обеих версий).
 
 ### Как работает индексация
 
@@ -326,8 +342,13 @@ ChatPromptBuilder  →  OpenAIChatGenerator (LLM_BASE_URL)
 2. `Готово. Я изучил этот файл, теперь можем его обсудить.` + краткое резюме
    ровно одним предложением.
 
-Если в файле нет текстового слоя (например, скан без OCR) или документ пуст,
-бот сообщит об этом отдельно.
+Если в файле нет ни текстового слоя, ни распознаваемого OCR-текста (например,
+пустой документ или скан очень низкого качества), бот сообщит об этом отдельно.
+
+Перед этим Docling перебирает три стратегии: обычный разбор (layout + авто-OCR),
+принудительное чтение нативного текстового слоя (`force_backend_text`) и
+полностраничный OCR. Если чанкер не смог нарезать уже извлечённый текст, он
+сохраняется плоскими фрагментами — файл не теряется.
 
 ### Команды
 
@@ -340,7 +361,8 @@ ChatPromptBuilder  →  OpenAIChatGenerator (LLM_BASE_URL)
 
 ### Логирование
 
-Каждый этап пишется в консоль: конвертация Docling, число чанков, батчи
+Каждый этап пишется в консоль: конвертация Docling (включая выбранную стратегию,
+status, число страниц, текстовых блоков, таблиц и символов), число чанков, батчи
 эмбеддингов, запись в Pinecone (индекс, namespace, id, размерность, ключи
 метаданных), параметры фильтра поиска, найденные фрагменты и ответ LLM. При
 ошибке записи в Pinecone логируется точное место сбоя и причина.
@@ -374,7 +396,8 @@ ChatPromptBuilder  →  OpenAIChatGenerator (LLM_BASE_URL)
 
 ## 📦 Зависимости
 
-- `pyTelegramBotAPI` — Telegram Bot API
+- `pyTelegramBotAPI` — Telegram Bot API (нужна версия **4.36+**: в ней
+  `download_file()` возвращает `bytes`, а не пишет файл в каталог)
 - `pinecone` — официальный клиент Pinecone
 - `sentence-transformers` + `torch` — локальные эмбеддинги
 - `openai` — клиент для AITUNNEL (OpenAI-compatible)
@@ -383,7 +406,11 @@ ChatPromptBuilder  →  OpenAIChatGenerator (LLM_BASE_URL)
 - `haystack-ai` — фреймворк умного помощника (пайплайны, агенты, инструменты)
 - `pinecone-haystack` — интеграция Haystack с Pinecone (`PineconeDocumentStore`)
 - `docling` — разбор PDF, DOCX, PPTX, XLSX, HTML, Markdown и CSV на смысловые чанки для `hay_v2_bot`
+- `PySocks` — поддержка SOCKS5-прокси для Telegram Bot API
 - `numpy`
+
+OCR для сканов идёт через `rapidocr`, который `docling` ставит вместе со
+стандартными зависимостями. Отдельно ставить EasyOCR/Tesseract не нужно.
 
 Полный список — в `requirements.txt`.
 
@@ -393,6 +420,8 @@ ChatPromptBuilder  →  OpenAIChatGenerator (LLM_BASE_URL)
 
 | Переменная              | Описание                                      | По умолчанию                    |
 |-------------------------|-----------------------------------------------|---------------------------------|
+| `TELEGRAM_PROXY_URL`    | HTTP/HTTPS/SOCKS5-прокси для Telegram Bot API | пусто                           |
+| `TELEGRAM_API_URL`      | Альтернативный Bot API URL (reverse proxy)    | пусто                           |
 | `SIMILARITY_THRESHOLD`  | Порог косинусного сходства для дубликатов     | `0.85`                          |
 | `PINECONE_PROXY_URL`    | URL HTTP/HTTPS-прокси для Pinecone SDK        | пусто                           |
 | `EMBEDDING_MODEL`       | Модель sentence-transformers                  | `all-MiniLM-L6-v2`              |
@@ -434,6 +463,105 @@ git push -u origin main
 
 ---
 
+## 🩺 Если Telegram API недоступен
+
+Симптомы в консоли:
+
+```text
+ERROR | TeleBot | Infinity polling exception:
+HTTPSConnectionPool(host='api.telegram.org', port=443): Max retries exceeded
+(Caused by ConnectTimeoutError ...)
+```
+
+Это **не ошибка кода**: провайдер или firewall блокирует прямой доступ к
+`api.telegram.org`. Pinecone и LLM при этом могут работать нормально.
+
+Варианты решения:
+
+1. **VPN** — включите VPN, который маршрутизирует весь системный трафик, а не
+   только приложение Telegram.
+2. **Прокси для Bot API** — добавьте в `.env`:
+
+   ```env
+   # HTTP/HTTPS-прокси
+   TELEGRAM_PROXY_URL=http://user:pass@host:port
+
+   # или SOCKS5 (нужен пакет PySocks, он есть в requirements.txt)
+   TELEGRAM_PROXY_URL=socks5h://host:port
+   ```
+
+3. **Свой reverse-proxy Bot API** — если у вас есть прокси-сервер для Telegram
+   Bot API:
+
+   ```env
+   TELEGRAM_API_URL=https://your-bot-api-proxy.example.com
+   ```
+
+После изменения `.env` перезапустите бота и проверьте соединение:
+
+```powershell
+venv\Scripts\python.exe hay_v2_bot\main.py --check-telegram
+```
+
+Прокси из настроек Telegram Desktop не используется автоматически: укажите его
+URL в `TELEGRAM_PROXY_URL`.
+
+---
+
+## 🩺 Если документ не распознаётся
+
+### `Telebot.download_file() takes 2 positional arguments but 3 were given`
+
+В `pyTelegramBotAPI 4.36` изменился API: метод `download_file(file_path)`
+возвращает `bytes` и больше не принимает каталог назначения. Обновите пакет:
+
+```powershell
+venv\Scripts\python.exe -m pip install -U "pyTelegramBotAPI>=4.36"
+```
+
+Код `hay_v2_bot` уже рассчитан на новый API и сам записывает полученные байты
+на диск.
+
+### «В файле не найден текст для сохранения»
+
+`hay_v2_bot` перебирает три стратегии, и в консоли видно, какая сработала:
+
+```text
+[DOCLING] Стратегия 'обычный режим (layout + авто-OCR)' | status=SUCCESS | страниц=1 | ...
+[DOCLING] Стратегия 'нативный текстовый слой (force_backend_text)' | ...
+[DOCLING] Стратегия 'полностраничный OCR' | ...
+```
+
+Проверить конкретный файл можно без Telegram и Pinecone:
+
+```powershell
+venv\Scripts\python.exe hay_v2_bot\main.py --inspect "C:\путь\к\статье.pdf"
+```
+
+Команда покажет `status` конвертации, количество страниц, текстовых блоков,
+таблиц и символов, а также пример извлечённого текста.
+
+Частые причины:
+
+- **скан без текстового слоя** — сработает полностраничный OCR; на CPU это
+  может занять десятки секунд на страницу;
+- **сложный layout/нестандартные шрифты** — помогает стратегия
+  `force_backend_text`;
+- **пустой или повреждённый файл** — текста нет ни в одной стратегии, бот
+  сообщит об этом и предложит прислать файл лучшего качества.
+
+### Предупреждения huggingface_hub про symlinks
+
+В Windows без режима разработчика `huggingface_hub` не может создавать
+symlink’и в кэше моделей. На работу это не влияет, кэш просто занимает больше
+места. Предупреждение можно отключить:
+
+```powershell
+$env:HF_HUB_DISABLE_SYMLINKS_WARNING = "1"
+```
+
+---
+
 ## ⚠️ Важно
 
 - Файл `.env` **никогда** не коммитьте (он уже в `.gitignore`).
@@ -446,6 +574,10 @@ git push -u origin main
   работать только один процесс. Защита от второго экземпляра уже встроена.
 - Первый разбор файла в `hay_v2_bot` может занять больше времени: Docling
   инициализирует модели, а эмбеддинги считаются локально.
+- Сканы обрабатываются через OCR на CPU: ориентировочно 30–60 секунд на
+  страницу (зависит от разрешения и загрузки машины).
+- Первый запуск Docling скачивает модели layout/OCR в
+  `%USERPROFILE%\.cache\huggingface` (несколько сотен мегабайт).
 
 ---
 

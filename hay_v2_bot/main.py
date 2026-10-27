@@ -8,6 +8,14 @@
 Проверка окружения без подключения к Telegram/Pinecone:
 
     venv\\Scripts\\python.exe hay_v2_bot\\main.py --check
+
+Проверка только соединения с Telegram Bot API:
+
+    venv\\Scripts\\python.exe hay_v2_bot\\main.py --check-telegram
+
+Локальный разбор одного файла (без Telegram и Pinecone):
+
+    venv\\Scripts\\python.exe hay_v2_bot\\main.py --inspect "C:\\путь\\к\\статье.pdf"
 """
 
 from __future__ import annotations
@@ -93,11 +101,97 @@ def run_checks() -> int:
     return 0 if ok else 1
 
 
+def run_telegram_check() -> int:
+    """Проверить только соединение с Telegram Bot API (без Pinecone и LLM)."""
+    logger.info("=" * 78)
+    logger.info("[CHECK-TG] Проверка соединения с Telegram Bot API")
+
+    if not TELEGRAM_BOT_TOKEN or TELEGRAM_BOT_TOKEN.startswith("your_"):
+        logger.error("[CHECK-TG] TELEGRAM_BOT_TOKEN не задан")
+        return 1
+
+    try:
+        from hay_v2_bot.bot.telegram_bot import (  # noqa: PLC0415
+            check_telegram_connection,
+            create_bot,
+        )
+
+        bot = create_bot()
+        check_telegram_connection(bot, attempts=1)
+    except Exception as exc:  # noqa: BLE001 - нужен понятный итог проверки
+        logger.error("[CHECK-TG] Итог: НЕТ СОЕДИНЕНИЯ | %s", exc)
+        logger.info("=" * 78)
+        return 1
+
+    logger.info("[CHECK-TG] Итог: OK")
+    logger.info("=" * 78)
+    return 0
+
+
+def inspect_file(file_path: str) -> int:
+    """
+    Разобрать один файл локально: Docling -> чанки, без Telegram и Pinecone.
+
+    Полезно, когда бот пишет «в файле не найден текст»: команда показывает,
+    что именно Docling увидел в документе и какая стратегия сработала.
+    """
+    from hay_v2_bot.components.docling_converter import DoclingDocumentConverter
+
+    path = Path(file_path).expanduser()
+    logger.info("=" * 78)
+    logger.info("[INSPECT] Файл: %s", path)
+
+    if not path.is_file():
+        logger.error("[INSPECT] Файл не найден: %s", path)
+        return 1
+
+    converter = DoclingDocumentConverter(max_tokens=512)
+    try:
+        result = converter.run(
+            file_path=str(path),
+            user_id="inspect",
+            file_name=path.name,
+        )
+    except Exception as exc:  # noqa: BLE001 - показываем причину целиком
+        logger.exception("[INSPECT] ОШИБКА разбора: %s", exc)
+        logger.info("[INSPECT] Итог: ТЕКСТ НЕ ИЗВЛЕЧЁН")
+        logger.info("=" * 78)
+        return 2
+
+    documents = result.get("documents", []) or []
+    logger.info("[INSPECT] Чанков: %d", len(documents))
+    for document in documents[:3]:
+        meta = document.meta or {}
+        logger.info(
+            "[INSPECT] Пример | page=%s | section=%r | %r",
+            meta.get("page_number"),
+            meta.get("section"),
+            (document.content or "")[:200],
+        )
+    logger.info(
+        "[INSPECT] Итог: %s",
+        f"OK, извлечено {len(documents)} чанк(ов)" if documents else "ТЕКСТ НЕ НАЙДЕН",
+    )
+    logger.info("=" * 78)
+    return 0 if documents else 2
+
+
 def main() -> int:
     configure_logging()
 
-    if "--check" in sys.argv[1:]:
+    arguments = sys.argv[1:]
+    if "--check" in arguments:
         return run_checks()
+    if "--check-telegram" in arguments:
+        return run_telegram_check()
+    if "--inspect" in arguments:
+        position = arguments.index("--inspect")
+        if position + 1 >= len(arguments):
+            logger.error(
+                "Использование: python hay_v2_bot/main.py --inspect <путь к файлу>"
+            )
+            return 1
+        return inspect_file(arguments[position + 1])
 
     logger.info("=" * 78)
     logger.info("[MAIN] Запуск hay_v2_bot")
