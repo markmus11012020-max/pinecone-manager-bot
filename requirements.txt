@@ -8,3 +8,4 @@ openai>=1.40.0
 requests>=2.31.0
 haystack-ai>=3.0.0
 pinecone-haystack>=6.0.0
+docling>=2.0.0
